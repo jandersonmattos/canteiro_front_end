@@ -8,11 +8,20 @@ import {
 } from 'next/navigation'
 
 import {
+  Suspense,
   useEffect,
   useState
 } from 'react'
 
 export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><p className="text-white">Carregando...</p></div>}>
+      <ResetPasswordContent />
+    </Suspense>
+  )
+}
+
+function ResetPasswordContent() {
 
   const router = useRouter()
 
