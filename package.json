@@ -1,0 +1,29 @@
+{
+  "name": "mattos-incorporadora-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
+    "date-fns": "^4.1.0",
+    "dhtmlx-gantt": "^9.1.4",
+    "lucide-react": "^0.511.0",
+    "next": "15.3.2",
+    "postcss": "^8.5.14",
+    "react": "19.0.0",
+    "react-datepicker": "^9.1.0",
+    "react-dom": "19.0.0",
+    "react-hot-toast": "^2.6.0",
+    "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^5"
+  }
+}
