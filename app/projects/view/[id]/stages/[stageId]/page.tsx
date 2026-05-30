@@ -653,6 +653,8 @@ export default function ProjectStageDetailsPage() {
   const [editingEntryKey, setEditingEntryKey] = useState<string | null>(null)
   const [editingEntryDraft, setEditingEntryDraft] = useState<DraftEntry>(emptyDraft)
   const [savingEntryKey, setSavingEntryKey] = useState<string | null>(null)
+  const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
+  const [deletingEntryKey, setDeletingEntryKey] = useState<string | null>(null)
   const [creatingItem, setCreatingItem] = useState(false)
   const [savingEntryItemId, setSavingEntryItemId] = useState<string | null>(null)
   const [entryDraft, setEntryDraft] = useState<DraftEntry>(emptyDraft)
@@ -996,12 +998,53 @@ export default function ProjectStageDetailsPage() {
     }
   }
 
-  function handleDeleteItem(itemId: string) {
-    setCostItems((current) => current.filter((item) => item.id !== itemId))
+  async function handleDeleteItem(itemId: string) {
+    if (!projectId || !stageId) {
+      toast.error('Projeto ou etapa invalidos para exclusao')
+      return
+    }
 
-    if (activeItemId === itemId) {
-      setActiveItemId(null)
-      setEntryDraft(emptyDraft())
+    if (!itemId) {
+      toast.error('Item invalido para exclusao')
+      return
+    }
+
+    try {
+      setDeletingItemId(itemId)
+
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages/${encodeURIComponent(stageId)}/items/${encodeURIComponent(itemId)}`,
+        {
+          method: 'DELETE'
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null)
+        const detail =
+          typeof errorData?.detail === 'string'
+            ? errorData.detail
+            : 'Erro ao excluir item'
+
+        throw new Error(detail)
+      }
+
+      setCostItems((current) => current.filter((item) => item.id !== itemId))
+
+      if (activeItemId === itemId) {
+        setActiveItemId(null)
+        setEntryDraft(emptyDraft())
+      }
+
+      toast.success('Item excluido com sucesso')
+
+      void loadStageItems()
+      void loadStageTotals()
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Erro ao excluir item')
+    } finally {
+      setDeletingItemId(null)
     }
   }
 
@@ -1291,28 +1334,79 @@ export default function ProjectStageDetailsPage() {
     }
   }
 
-  function handleDeleteEntry(itemId: string, entryId: string) {
-    setCostItems((current) =>
-      current.map((item, currentItemIndex) =>
-        item.id !== itemId
-          ? item
-          : (() => {
-              const entryIndex = item.entries.findIndex((entry) => entry.id === entryId)
+  async function handleDeleteEntry(itemId: string, entryId: string) {
+    if (!projectId || !stageId) {
+      toast.error('Projeto ou etapa invalidos para exclusao')
+      return
+    }
 
-              if (entryIndex < 0) {
-                return item
-              }
+    if (!entryId) {
+      toast.error('Subitem invalido para exclusao')
+      return
+    }
 
-              return {
+    const key = `${itemId}:${entryId}`
+
+    try {
+      setDeletingEntryKey(key)
+
+      const scopedUrl =
+        `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages/${encodeURIComponent(stageId)}/costs/${encodeURIComponent(entryId)}`
+
+      const fallbackUrl =
+        `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/costs/${encodeURIComponent(entryId)}`
+
+      const response = await fetch(scopedUrl, {
+        method: 'DELETE'
+      })
+
+      if (!response.ok) {
+        if (response.status === 404 || response.status === 405) {
+          const fallbackResponse = await fetch(fallbackUrl, {
+            method: 'DELETE'
+          })
+
+          if (!fallbackResponse.ok) {
+            const fallbackErrorData = await fallbackResponse.json().catch(() => null)
+            const fallbackDetail =
+              typeof fallbackErrorData?.detail === 'string'
+                ? fallbackErrorData.detail
+                : 'Erro ao excluir subitem'
+
+            throw new Error(fallbackDetail)
+          }
+        } else {
+          const errorData = await response.json().catch(() => null)
+          const detail =
+            typeof errorData?.detail === 'string'
+              ? errorData.detail
+              : 'Erro ao excluir subitem'
+
+          throw new Error(detail)
+        }
+      }
+
+      setCostItems((current) =>
+        current.map((item) =>
+          item.id !== itemId
+            ? item
+            : {
                 ...item,
-                entries: item.entries.filter((_, index) => index !== entryIndex)
+                entries: item.entries.filter((entry) => entry.id !== entryId)
               }
-            })()
+        )
       )
-    )
 
-    // Keep financial summary in sync after each launch operation.
-    void loadStageTotals()
+      toast.success('Subitem excluido com sucesso')
+
+      void loadStageItems()
+      void loadStageTotals()
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Erro ao excluir subitem')
+    } finally {
+      setDeletingEntryKey(null)
+    }
   }
 
   async function handleSaveStageDates() {
@@ -1657,11 +1751,16 @@ export default function ProjectStageDetailsPage() {
 
                               <button
                                 type="button"
-                                onClick={() => handleDeleteItem(item.id)}
+                                onClick={() => void handleDeleteItem(item.id)}
+                                disabled={deletingItemId === item.id}
                                 className="w-9 h-9 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 flex items-center justify-center"
                                 title="Remover item"
                               >
-                                <Trash2 size={15} />
+                                {deletingItemId === item.id ? (
+                                  <Loader2 size={15} className="animate-spin" />
+                                ) : (
+                                  <Trash2 size={15} />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -2018,11 +2117,16 @@ export default function ProjectStageDetailsPage() {
 
                                               <button
                                                 type="button"
-                                                onClick={() => handleDeleteEntry(item.id, entry.id)}
+                                                onClick={() => void handleDeleteEntry(item.id, entry.id)}
+                                                disabled={deletingEntryKey === rowKey}
                                                 className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20"
                                                 title="Excluir subitem"
                                               >
-                                                <Trash2 size={14} />
+                                                {deletingEntryKey === rowKey ? (
+                                                  <Loader2 size={14} className="animate-spin" />
+                                                ) : (
+                                                  <Trash2 size={14} />
+                                                )}
                                               </button>
                                             </div>
                                           </td>
