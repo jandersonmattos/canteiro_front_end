@@ -19,8 +19,10 @@ import Sidebar from '../../../../../../components/Sidebar'
 
 import {
   ArrowLeft,
+  Check,
   ClipboardList,
   Loader2,
+  Pencil,
   Plus,
   Trash2
 } from 'lucide-react'
@@ -353,6 +355,10 @@ function pickNumber(...values: unknown[]) {
   return 0
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
 function normalizeStageTotals(raw: unknown): StageTotals {
   const item = raw && typeof raw === 'object'
     ? raw as Record<string, unknown>
@@ -391,6 +397,209 @@ function normalizeStageTotals(raw: unknown): StageTotals {
   }
 }
 
+function getArrayFromPayload(raw: unknown, keys: string[], depth = 0): unknown[] {
+  if (Array.isArray(raw)) {
+    return raw
+  }
+
+  if (!raw || typeof raw !== 'object' || depth > 3) {
+    return []
+  }
+
+  const root = raw as LooseObject
+
+  for (const key of keys) {
+    const value = root[key]
+
+    if (Array.isArray(value)) {
+      return value
+    }
+
+    if (value && typeof value === 'object') {
+      const nested = getArrayFromPayload(value, keys, depth + 1)
+
+      if (nested.length > 0) {
+        return nested
+      }
+    }
+  }
+
+  for (const value of Object.values(root)) {
+    if (value && typeof value === 'object') {
+      const nested = getArrayFromPayload(value, keys, depth + 1)
+
+      if (nested.length > 0) {
+        return nested
+      }
+    }
+  }
+
+  return []
+}
+
+function normalizeItemsWithSubitems(raw: unknown): CostItem[] {
+  const source = getArrayFromPayload(raw, ['items', 'itens'])
+
+  return source
+    .map((rawItem) => {
+      if (!rawItem || typeof rawItem !== 'object') {
+        return null
+      }
+
+      const item = rawItem as LooseObject
+      const itemId = pickString(item.item_id, item.id)
+      const itemName = pickString(item.nome, item.name, item.item_nome, item.item_name)
+
+      if (!itemId || !itemName) {
+        return null
+      }
+
+      const subitemsRaw = Array.isArray(item.subitens)
+        ? item.subitens
+        : Array.isArray(item.subitems)
+        ? item.subitems
+        : []
+
+      const entries = subitemsRaw
+        .map((rawSubitem) => {
+          if (!rawSubitem || typeof rawSubitem !== 'object') {
+            return null
+          }
+
+          const subitem = rawSubitem as LooseObject
+          const quantityValue = pickNumber(subitem.quantidade, subitem.quantity)
+          const quantity = quantityValue > 0 ? quantityValue : 1
+          const unitPrice = pickNumber(
+            subitem.valor_unitario,
+            subitem.unit_price,
+            subitem.unitPrice
+          )
+          const totalRaw = pickNumber(
+            subitem.total,
+            subitem.valor_total,
+            subitem.total_price,
+            subitem.totalPrice
+          )
+
+          return {
+            id: pickString(subitem.id, subitem.cost_id, subitem.custo_id) || makeId(),
+            description: pickString(subitem.descricao, subitem.description, subitem.nome, subitem.name),
+            unit: pickString(subitem.unidade, subitem.recurso_nome, subitem.unit) || 'unit',
+            quantity,
+            unitPrice,
+            totalPrice: totalRaw > 0 ? totalRaw : quantity * unitPrice,
+            plannedValue: pickNumber(
+              subitem.valor_previsto,
+              subitem.planned_value,
+              subitem.plannedValue
+            ),
+            paidValue: pickNumber(
+              subitem.valor_pago,
+              subitem.paid_value,
+              subitem.paidValue
+            ),
+            date: pickString(subitem.data, subitem.date),
+            notes: pickString(subitem.observacoes, subitem.notes)
+          }
+        })
+        .filter(Boolean) as CostEntry[]
+
+      return {
+        id: itemId,
+        name: itemName,
+        entries
+      }
+    })
+    .filter(Boolean) as CostItem[]
+}
+
+function normalizeFlatCosts(raw: unknown): CostItem[] {
+  const source = getArrayFromPayload(raw, ['costs', 'custos', 'results', 'data'])
+  const grouped = new Map<string, CostItem>()
+
+  source.forEach((rawCost, index) => {
+    if (!rawCost || typeof rawCost !== 'object') {
+      return
+    }
+
+    const cost = rawCost as LooseObject
+    const quantityValue = pickNumber(cost.quantidade, cost.quantity)
+    const quantity = quantityValue > 0 ? quantityValue : 1
+    const unitPrice = pickNumber(
+      cost.valor_unitario,
+      cost.unit_price,
+      cost.unitPrice
+    )
+    const totalRaw = pickNumber(
+      cost.total,
+      cost.valor_total,
+      cost.total_price,
+      cost.totalPrice
+    )
+
+    const entry: CostEntry = {
+      id: pickString(cost.id, cost.custo_id, cost.cost_id) || makeId(),
+      description: pickString(cost.descricao, cost.description, cost.subitem_nome) || 'Sem descricao',
+      unit: pickString(cost.unidade, cost.unit, cost.recurso_nome) || 'unit',
+      quantity,
+      unitPrice,
+      totalPrice: totalRaw > 0 ? totalRaw : quantity * unitPrice,
+      plannedValue: pickNumber(
+        cost.valor_previsto,
+        cost.planned_value,
+        cost.plannedValue
+      ),
+      paidValue: pickNumber(
+        cost.valor_pago,
+        cost.paid_value,
+        cost.paidValue
+      ),
+      date: pickString(cost.data, cost.date),
+      notes: pickString(cost.observacoes, cost.notes)
+    }
+
+    const itemId = pickString(
+      cost.item_id,
+      (cost.item as LooseObject | undefined)?.item_id
+    )
+
+    const itemName = pickString(
+      cost.item_nome,
+      cost.item_name,
+      cost.recurso_nome,
+      cost.resource_name,
+      (cost.item as LooseObject | undefined)?.nome,
+      (cost.item as LooseObject | undefined)?.name
+    ) || 'Item sem nome'
+
+    const groupKey = itemId || itemName || `item-${index}`
+    const existing = grouped.get(groupKey)
+
+    if (existing) {
+      existing.entries.push(entry)
+      return
+    }
+
+    grouped.set(groupKey, {
+      id: itemId || groupKey,
+      name: itemName,
+      entries: [entry]
+    })
+  })
+
+  return Array.from(grouped.values())
+}
+
+function normalizeStageCostItems(raw: unknown): CostItem[] {
+  const fromItems = normalizeItemsWithSubitems(raw)
+
+  if (fromItems.length > 0) {
+    return fromItems
+  }
+
+  return normalizeFlatCosts(raw)
+}
+
 function emptyDraft(): DraftEntry {
   return {
     description: '',
@@ -402,6 +611,20 @@ function emptyDraft(): DraftEntry {
     paidValue: '',
     date: new Date().toISOString().slice(0, 10),
     notes: ''
+  }
+}
+
+function entryToDraft(entry: CostEntry): DraftEntry {
+  return {
+    description: entry.description,
+    unit: entry.unit || 'unit',
+    quantity: String(entry.quantity || 1),
+    unitPrice: formatCurrency(entry.unitPrice || 0),
+    totalPrice: formatCurrency(entry.totalPrice || 0),
+    plannedValue: formatCurrency(entry.plannedValue || 0),
+    paidValue: formatCurrency(entry.paidValue || 0),
+    date: toDateInputValue(entry.date) || new Date().toISOString().slice(0, 10),
+    notes: entry.notes || ''
   }
 }
 
@@ -420,9 +643,16 @@ export default function ProjectStageDetailsPage() {
   const [stageMeta, setStageMeta] = useState<StageMeta | null>(null)
 
   const [costItems, setCostItems] = useState<CostItem[]>([])
+  const [descriptionFilter, setDescriptionFilter] = useState('')
 
   const [newItemName, setNewItemName] = useState('')
   const [activeItemId, setActiveItemId] = useState<string | null>(null)
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [editingItemName, setEditingItemName] = useState('')
+  const [savingItemId, setSavingItemId] = useState<string | null>(null)
+  const [editingEntryKey, setEditingEntryKey] = useState<string | null>(null)
+  const [editingEntryDraft, setEditingEntryDraft] = useState<DraftEntry>(emptyDraft)
+  const [savingEntryKey, setSavingEntryKey] = useState<string | null>(null)
   const [creatingItem, setCreatingItem] = useState(false)
   const [savingEntryItemId, setSavingEntryItemId] = useState<string | null>(null)
   const [entryDraft, setEntryDraft] = useState<DraftEntry>(emptyDraft)
@@ -441,6 +671,28 @@ export default function ProjectStageDetailsPage() {
   const totalLaunches = useMemo(
     () => costItems.reduce((sum, item) => sum + item.entries.length, 0),
     [costItems]
+  )
+
+  const filteredCostItems = useMemo(() => {
+    const filterValue = descriptionFilter.trim().toLowerCase()
+
+    if (!filterValue) {
+      return costItems
+    }
+
+    return costItems
+      .map((item) => ({
+        ...item,
+        entries: item.entries.filter((entry) =>
+          entry.description.toLowerCase().includes(filterValue)
+        )
+      }))
+      .filter((item) => item.entries.length > 0)
+  }, [costItems, descriptionFilter])
+
+  const filteredLaunches = useMemo(
+    () => filteredCostItems.reduce((sum, item) => sum + item.entries.length, 0),
+    [filteredCostItems]
   )
 
   useEffect(() => {
@@ -471,87 +723,35 @@ export default function ProjectStageDetailsPage() {
     }
 
     try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages/${encodeURIComponent(stageId)}/items`
-      )
+      const itemsUrl = `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages/${encodeURIComponent(stageId)}/items`
+      const costsUrl = `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages/${encodeURIComponent(stageId)}/costs`
+
+      const response = await fetch(itemsUrl)
 
       if (!response.ok) {
-        throw new Error()
-      }
+        const fallback = await fetch(costsUrl)
 
-      const data = await response.json()
+        if (!fallback.ok) {
+          throw new Error()
+        }
 
-      if (!Array.isArray(data)) {
-        setCostItems([])
+        const fallbackData = await fallback.json()
+        setCostItems(normalizeFlatCosts(fallbackData))
         return
       }
 
-      const normalized = data
-        .map((rawItem) => {
-          if (!rawItem || typeof rawItem !== 'object') {
-            return null
-          }
+      const data = await response.json()
+      const normalized = normalizeItemsWithSubitems(data)
 
-          const item = rawItem as Record<string, unknown>
-          const itemName = pickString(item.nome, item.name)
+      if (normalized.length === 0) {
+        const fallback = await fetch(costsUrl)
 
-          if (!itemName) {
-            return null
-          }
-
-          const subitemsRaw = Array.isArray(item.subitens) ? item.subitens : []
-
-          const entries = subitemsRaw
-            .map((rawSubitem) => {
-              if (!rawSubitem || typeof rawSubitem !== 'object') {
-                return null
-              }
-
-              const subitem = rawSubitem as Record<string, unknown>
-              const quantityValue = pickNumber(subitem.quantidade, subitem.quantity)
-              const quantity = quantityValue > 0 ? quantityValue : 1
-              const unitPrice = pickNumber(
-                subitem.valor_unitario,
-                subitem.unit_price,
-                subitem.unitPrice
-              )
-              const totalRaw = pickNumber(
-                subitem.total,
-                subitem.valor_total,
-                subitem.total_price,
-                subitem.totalPrice
-              )
-
-              return {
-                id: pickString(subitem.id) || makeId(),
-                description: pickString(subitem.descricao, subitem.description),
-                unit: pickString(subitem.unidade, subitem.recurso_nome, subitem.unit) || 'unit',
-                quantity,
-                unitPrice,
-                totalPrice: totalRaw > 0 ? totalRaw : quantity * unitPrice,
-                plannedValue: pickNumber(
-                  subitem.valor_previsto,
-                  subitem.planned_value,
-                  subitem.plannedValue
-                ),
-                paidValue: pickNumber(
-                  subitem.valor_pago,
-                  subitem.paid_value,
-                  subitem.paidValue
-                ),
-                date: pickString(subitem.data, subitem.date),
-                notes: pickString(subitem.observacoes, subitem.notes)
-              }
-            })
-            .filter(Boolean) as CostEntry[]
-
-          return {
-            id: pickString(item.id) || makeId(),
-            name: itemName,
-            entries
-          }
-        })
-        .filter(Boolean) as CostItem[]
+        if (fallback.ok) {
+          const fallbackData = await fallback.json()
+          setCostItems(normalizeFlatCosts(fallbackData))
+          return
+        }
+      }
 
       setCostItems(normalized)
     } catch (error) {
@@ -559,6 +759,98 @@ export default function ProjectStageDetailsPage() {
       setCostItems([])
       toast.error('Nao foi possivel carregar os itens da etapa')
     }
+  }
+
+  async function updateItemOnApi(itemId: string, name: string) {
+    const url = `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages/${encodeURIComponent(stageId)}/items/${encodeURIComponent(itemId)}`
+    const body = JSON.stringify({ nome: name, name })
+    const headers = { 'Content-Type': 'application/json' }
+
+    const putResponse = await fetch(url, { method: 'PUT', headers, body })
+
+    if (putResponse.ok) {
+      return
+    }
+
+    if (putResponse.status === 405) {
+      const patchResponse = await fetch(url, { method: 'PATCH', headers, body })
+
+      if (patchResponse.ok) {
+        return
+      }
+
+      const errorData = await patchResponse.json().catch(() => null)
+      throw new Error(
+        typeof errorData?.detail === 'string'
+          ? errorData.detail
+          : 'Erro ao atualizar item'
+      )
+    }
+
+    const errorData = await putResponse.json().catch(() => null)
+    throw new Error(
+      typeof errorData?.detail === 'string'
+        ? errorData.detail
+        : 'Erro ao atualizar item'
+    )
+  }
+
+  async function updateEntryOnApi(entryId: string, payload: Record<string, unknown>) {
+    const stageUrl = `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages/${encodeURIComponent(stageId)}/costs/${encodeURIComponent(entryId)}`
+    const projectUrl = `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/costs/${encodeURIComponent(entryId)}`
+    const headers = { 'Content-Type': 'application/json' }
+    const body = JSON.stringify(payload)
+
+    const putResponse = await fetch(stageUrl, { method: 'PUT', headers, body })
+
+    if (putResponse.ok) {
+      return
+    }
+
+    if (putResponse.status === 405) {
+      const patchResponse = await fetch(stageUrl, { method: 'PATCH', headers, body })
+
+      if (patchResponse.ok) {
+        return
+      }
+    }
+
+    if (putResponse.status === 404) {
+      const fallbackPut = await fetch(projectUrl, { method: 'PUT', headers, body })
+
+      if (fallbackPut.ok) {
+        return
+      }
+
+      if (fallbackPut.status === 405) {
+        const fallbackPatch = await fetch(projectUrl, { method: 'PATCH', headers, body })
+
+        if (fallbackPatch.ok) {
+          return
+        }
+
+        const errorData = await fallbackPatch.json().catch(() => null)
+        throw new Error(
+          typeof errorData?.detail === 'string'
+            ? errorData.detail
+            : 'Erro ao atualizar lancamento'
+        )
+      }
+
+      const errorData = await fallbackPut.json().catch(() => null)
+      throw new Error(
+        typeof errorData?.detail === 'string'
+          ? errorData.detail
+          : 'Erro ao atualizar lancamento'
+      )
+    }
+
+    const errorData = await putResponse.json().catch(() => null)
+    throw new Error(
+      typeof errorData?.detail === 'string'
+        ? errorData.detail
+        : 'Erro ao atualizar lancamento'
+    )
   }
 
   async function loadStageContext() {
@@ -678,7 +970,7 @@ export default function ProjectStageDetailsPage() {
       }
 
       const responseData = await response.json().catch(() => null)
-      const createdItemId = pickString(responseData?.id)
+  const createdItemId = pickString(responseData?.item_id, responseData?.id)
 
       const created: CostItem = {
         id: createdItemId || makeId(),
@@ -713,8 +1005,162 @@ export default function ProjectStageDetailsPage() {
     }
   }
 
-  async function handleAddEntry(itemIndex: number) {
-    const selectedItem = costItems[itemIndex]
+  function startEditItem(item: CostItem) {
+    if (!item.id || !isUuid(item.id)) {
+      toast.error('Item sem ID valido para edicao')
+      return
+    }
+
+    setEditingItemId(item.id)
+    setEditingItemName(item.name)
+  }
+
+  async function handleSaveItem(itemId: string) {
+    const normalizedName = editingItemName.trim()
+
+    if (!normalizedName) {
+      toast.error('Informe o nome do item')
+      return
+    }
+
+    const hasDuplicated = costItems.some(
+      (item) =>
+        item.id !== itemId &&
+        item.name.toLowerCase() === normalizedName.toLowerCase()
+    )
+
+    if (hasDuplicated) {
+      toast.error('Ja existe um item com esse nome')
+      return
+    }
+
+    try {
+      setSavingItemId(itemId)
+
+      await updateItemOnApi(itemId, normalizedName)
+
+      setCostItems((current) =>
+        current.map((item) =>
+          item.id === itemId
+            ? { ...item, name: normalizedName }
+            : item
+        )
+      )
+
+      setEditingItemId(null)
+      setEditingItemName('')
+      toast.success('Item atualizado')
+
+      void loadStageItems()
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Erro ao editar item')
+    } finally {
+      setSavingItemId(null)
+    }
+  }
+
+  function startEditEntry(itemId: string, entry: CostEntry) {
+    setEditingEntryKey(`${itemId}:${entry.id}`)
+    setEditingEntryDraft(entryToDraft(entry))
+  }
+
+  async function handleSaveEntry(itemId: string, entryId: string) {
+    const description = editingEntryDraft.description.trim()
+    const unit = editingEntryDraft.unit.trim()
+    const quantity = parsePositiveNumber(editingEntryDraft.quantity)
+    let unitPrice = parsePositiveNumber(editingEntryDraft.unitPrice)
+    let totalPrice = parsePositiveNumber(editingEntryDraft.totalPrice)
+    const plannedValue = parsePositiveNumber(editingEntryDraft.plannedValue)
+    const paidValue = parsePositiveNumber(editingEntryDraft.paidValue)
+    const notes = editingEntryDraft.notes.trim()
+
+    if (!description) {
+      toast.error('Descreva o subitem')
+      return
+    }
+
+    if (!unit) {
+      toast.error('Selecione a unidade')
+      return
+    }
+
+    if (quantity <= 0) {
+      toast.error('Quantidade deve ser maior que zero')
+      return
+    }
+
+    if (totalPrice <= 0) {
+      totalPrice = quantity * unitPrice
+    }
+
+    if (unitPrice <= 0) {
+      unitPrice = totalPrice > 0 ? totalPrice / quantity : 0
+    }
+
+    const payload = {
+      descricao: description,
+      unidade: unit,
+      quantidade: quantity,
+      valor_unitario: unitPrice,
+      valor_total: totalPrice,
+      valor_previsto: plannedValue,
+      valor_pago: paidValue,
+      data: editingEntryDraft.date || null,
+      observacoes: notes,
+      item_id: itemId
+    }
+
+    const key = `${itemId}:${entryId}`
+
+    try {
+      setSavingEntryKey(key)
+
+      await updateEntryOnApi(entryId, payload)
+
+      setCostItems((current) =>
+        current.map((item) =>
+          item.id !== itemId
+            ? item
+            : {
+                ...item,
+                entries: item.entries.map((entry) =>
+                  entry.id !== entryId
+                    ? entry
+                    : {
+                        ...entry,
+                        description,
+                        unit,
+                        quantity,
+                        unitPrice,
+                        totalPrice,
+                        plannedValue,
+                        paidValue,
+                        date: editingEntryDraft.date,
+                        notes
+                      }
+                )
+              }
+        )
+      )
+
+      setEditingEntryKey(null)
+      setEditingEntryDraft(emptyDraft())
+      toast.success('Lancamento atualizado')
+
+      void loadStageItems()
+      void loadStageTotals()
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Erro ao editar lancamento')
+    } finally {
+      setSavingEntryKey(null)
+    }
+  }
+
+  async function handleAddEntry(itemId: string) {
+    const itemIndex = costItems.findIndex((item) => item.id === itemId)
+    const selectedItem = itemIndex >= 0 ? costItems[itemIndex] : null
 
     if (!selectedItem) {
       toast.error('Item invalido para lancamento')
@@ -845,15 +1291,23 @@ export default function ProjectStageDetailsPage() {
     }
   }
 
-  function handleDeleteEntry(itemIndex: number, entryIndex: number) {
+  function handleDeleteEntry(itemId: string, entryId: string) {
     setCostItems((current) =>
       current.map((item, currentItemIndex) =>
-        currentItemIndex === itemIndex
-          ? {
-              ...item,
-              entries: item.entries.filter((_, index) => index !== entryIndex)
-            }
-          : item
+        item.id !== itemId
+          ? item
+          : (() => {
+              const entryIndex = item.entries.findIndex((entry) => entry.id === entryId)
+
+              if (entryIndex < 0) {
+                return item
+              }
+
+              return {
+                ...item,
+                entries: item.entries.filter((_, index) => index !== entryIndex)
+              }
+            })()
       )
     )
 
@@ -1069,7 +1523,9 @@ export default function ProjectStageDetailsPage() {
                   </div>
 
                   <div className="text-sm text-zinc-300 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-2">
-                    {totalLaunches} lancamentos registrados
+                    {descriptionFilter.trim()
+                      ? `${filteredLaunches} de ${totalLaunches} lancamentos`
+                      : `${totalLaunches} lancamentos registrados`}
                   </div>
                 </div>
 
@@ -1105,13 +1561,27 @@ export default function ProjectStageDetailsPage() {
                   </div>
                 </div>
 
+                <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+                  <label className="block text-sm text-zinc-300 mb-2">Filtrar custos por descricao de subitem</label>
+                  <input
+                    value={descriptionFilter}
+                    onChange={(event) => setDescriptionFilter(event.target.value)}
+                    placeholder="Ex.: Concreto, Mao de obra, Pedra"
+                    className="h-11 w-full rounded-xl border border-white/10 bg-black/30 px-3 text-sm outline-none focus:border-emerald-400/50"
+                  />
+                </div>
+
                 {costItems.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-white/15 bg-black/20 p-5 text-zinc-400 text-sm">
                     Nenhum item cadastrado ainda. Crie um item e comece a lancar os subitens de custo.
                   </div>
+                ) : filteredCostItems.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-white/15 bg-black/20 p-5 text-zinc-400 text-sm">
+                    Nenhum lancamento encontrado para o filtro informado.
+                  </div>
                 ) : (
                   <div className="space-y-4">
-                    {costItems.map((item, itemIndex) => {
+                    {filteredCostItems.map((item) => {
                       const itemTotal = item.entries.reduce(
                         (sum, entry) => sum + entry.totalPrice,
                         0
@@ -1122,7 +1592,42 @@ export default function ProjectStageDetailsPage() {
                           <div className="px-4 py-3 border-b border-white/10 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                               <p className="text-xs uppercase tracking-wide text-zinc-500">Item</p>
-                              <h4 className="text-lg font-semibold">{item.name}</h4>
+                              {editingItemId === item.id ? (
+                                <div className="flex items-center gap-2 mt-1">
+                                  <input
+                                    value={editingItemName}
+                                    onChange={(event) => setEditingItemName(event.target.value)}
+                                    className="h-9 rounded-lg border border-white/10 bg-black/30 px-3 text-sm outline-none focus:border-emerald-400/50"
+                                  />
+
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSaveItem(item.id)}
+                                    disabled={savingItemId === item.id}
+                                    className="w-9 h-9 rounded-lg bg-emerald-500 text-black hover:bg-emerald-400 transition-all flex items-center justify-center disabled:opacity-50"
+                                    title="Salvar item"
+                                  >
+                                    {savingItemId === item.id ? (
+                                      <Loader2 size={15} className="animate-spin" />
+                                    ) : (
+                                      <Check size={15} />
+                                    )}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingItemId(null)
+                                      setEditingItemName('')
+                                    }}
+                                    className="h-9 px-3 rounded-lg border border-white/15 bg-white/[0.03] hover:bg-white/[0.08] transition-all text-sm"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <h4 className="text-lg font-semibold">{item.name}</h4>
+                              )}
                             </div>
 
                             <div className="flex items-center gap-2">
@@ -1139,6 +1644,15 @@ export default function ProjectStageDetailsPage() {
                                 className="h-9 px-3 rounded-lg border border-white/15 bg-white/[0.03] hover:bg-white/[0.08] transition-all text-sm"
                               >
                                 Novo subitem
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => startEditItem(item)}
+                                className="w-9 h-9 rounded-lg border border-white/15 bg-white/[0.03] hover:bg-white/[0.08] transition-all flex items-center justify-center"
+                                title="Editar item"
+                              >
+                                <Pencil size={14} />
                               </button>
 
                               <button
@@ -1284,7 +1798,7 @@ export default function ProjectStageDetailsPage() {
 
                                 <button
                                   type="button"
-                                  onClick={() => void handleAddEntry(itemIndex)}
+                                  onClick={() => void handleAddEntry(item.id)}
                                   disabled={savingEntryItemId === item.id}
                                   className="h-10 rounded-xl bg-emerald-500 text-black font-semibold hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
@@ -1329,28 +1843,192 @@ export default function ProjectStageDetailsPage() {
                                 </thead>
                                 <tbody>
                                   {item.entries.map((entry, entryIndex) => (
-                                    <tr key={`${entry.id}-${entryIndex}`} className="border-b border-white/5">
-                                      <td className="px-4 py-3 text-zinc-100">{entry.description}</td>
-                                      <td className="px-4 py-3 text-zinc-300">{entry.unit}</td>
-                                      <td className="px-4 py-3 text-zinc-300">{entry.quantity}</td>
-                                      <td className="px-4 py-3 text-zinc-300">{formatCurrency(entry.unitPrice)}</td>
-                                      <td className="px-4 py-3 text-emerald-300 font-medium">
-                                        {formatCurrency(entry.totalPrice)}
-                                      </td>
-                                      <td className="px-4 py-3 text-zinc-300">{formatCurrency(entry.plannedValue)}</td>
-                                      <td className="px-4 py-3 text-zinc-300">{formatCurrency(entry.paidValue)}</td>
-                                      <td className="px-4 py-3 text-zinc-300">{formatDateLabel(entry.date)}</td>
-                                      <td className="px-4 py-3 text-right">
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDeleteEntry(itemIndex, entryIndex)}
-                                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20"
-                                          title="Excluir subitem"
-                                        >
-                                          <Trash2 size={14} />
-                                        </button>
-                                      </td>
-                                    </tr>
+                                    (() => {
+                                      const rowKey = `${item.id}:${entry.id}`
+                                      const isEditing = editingEntryKey === rowKey
+
+                                      if (isEditing) {
+                                        return (
+                                          <tr key={`${entry.id}-${entryIndex}`} className="border-b border-white/5 bg-black/30">
+                                            <td className="px-4 py-2">
+                                              <input
+                                                value={editingEntryDraft.description}
+                                                onChange={(event) =>
+                                                  setEditingEntryDraft((current) => ({
+                                                    ...current,
+                                                    description: event.target.value
+                                                  }))
+                                                }
+                                                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm outline-none focus:border-emerald-400/50"
+                                              />
+                                            </td>
+
+                                            <td className="px-4 py-2">
+                                              <select
+                                                value={editingEntryDraft.unit}
+                                                onChange={(event) =>
+                                                  setEditingEntryDraft((current) => ({
+                                                    ...current,
+                                                    unit: event.target.value
+                                                  }))
+                                                }
+                                                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm outline-none focus:border-emerald-400/50"
+                                              >
+                                                {UNIT_OPTIONS.map((unitOption) => (
+                                                  <option key={unitOption} value={unitOption} className="bg-zinc-950 text-white">
+                                                    {unitOption}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </td>
+
+                                            <td className="px-4 py-2">
+                                              <input
+                                                value={editingEntryDraft.quantity}
+                                                onChange={(event) =>
+                                                  setEditingEntryDraft((current) => ({
+                                                    ...current,
+                                                    quantity: event.target.value
+                                                  }))
+                                                }
+                                                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm outline-none focus:border-emerald-400/50"
+                                              />
+                                            </td>
+
+                                            <td className="px-4 py-2">
+                                              <input
+                                                value={editingEntryDraft.unitPrice}
+                                                onChange={(event) =>
+                                                  setEditingEntryDraft((current) => ({
+                                                    ...current,
+                                                    unitPrice: formatCurrencyInputBRL(event.target.value)
+                                                  }))
+                                                }
+                                                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm outline-none focus:border-emerald-400/50"
+                                              />
+                                            </td>
+
+                                            <td className="px-4 py-2">
+                                              <input
+                                                value={editingEntryDraft.totalPrice}
+                                                onChange={(event) =>
+                                                  setEditingEntryDraft((current) => ({
+                                                    ...current,
+                                                    totalPrice: formatCurrencyInputBRL(event.target.value)
+                                                  }))
+                                                }
+                                                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm outline-none focus:border-emerald-400/50"
+                                              />
+                                            </td>
+
+                                            <td className="px-4 py-2">
+                                              <input
+                                                value={editingEntryDraft.plannedValue}
+                                                onChange={(event) =>
+                                                  setEditingEntryDraft((current) => ({
+                                                    ...current,
+                                                    plannedValue: formatCurrencyInputBRL(event.target.value)
+                                                  }))
+                                                }
+                                                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm outline-none focus:border-emerald-400/50"
+                                              />
+                                            </td>
+
+                                            <td className="px-4 py-2">
+                                              <input
+                                                value={editingEntryDraft.paidValue}
+                                                onChange={(event) =>
+                                                  setEditingEntryDraft((current) => ({
+                                                    ...current,
+                                                    paidValue: formatCurrencyInputBRL(event.target.value)
+                                                  }))
+                                                }
+                                                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm outline-none focus:border-emerald-400/50"
+                                              />
+                                            </td>
+
+                                            <td className="px-4 py-2">
+                                              <input
+                                                type="date"
+                                                value={editingEntryDraft.date}
+                                                onChange={(event) =>
+                                                  setEditingEntryDraft((current) => ({
+                                                    ...current,
+                                                    date: event.target.value
+                                                  }))
+                                                }
+                                                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm outline-none focus:border-emerald-400/50"
+                                              />
+                                            </td>
+
+                                            <td className="px-4 py-2 text-right">
+                                              <div className="inline-flex items-center gap-2">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => void handleSaveEntry(item.id, entry.id)}
+                                                  disabled={savingEntryKey === rowKey}
+                                                  className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-emerald-500 text-black hover:bg-emerald-400 disabled:opacity-50"
+                                                  title="Salvar subitem"
+                                                >
+                                                  {savingEntryKey === rowKey ? (
+                                                    <Loader2 size={14} className="animate-spin" />
+                                                  ) : (
+                                                    <Check size={14} />
+                                                  )}
+                                                </button>
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setEditingEntryKey(null)
+                                                    setEditingEntryDraft(emptyDraft())
+                                                  }}
+                                                  className="inline-flex items-center justify-center h-8 px-2 rounded-lg border border-white/15 bg-white/[0.03] hover:bg-white/[0.08]"
+                                                >
+                                                  Cancelar
+                                                </button>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )
+                                      }
+
+                                      return (
+                                        <tr key={`${entry.id}-${entryIndex}`} className="border-b border-white/5">
+                                          <td className="px-4 py-3 text-zinc-100">{entry.description}</td>
+                                          <td className="px-4 py-3 text-zinc-300">{entry.unit}</td>
+                                          <td className="px-4 py-3 text-zinc-300">{entry.quantity}</td>
+                                          <td className="px-4 py-3 text-zinc-300">{formatCurrency(entry.unitPrice)}</td>
+                                          <td className="px-4 py-3 text-emerald-300 font-medium">
+                                            {formatCurrency(entry.totalPrice)}
+                                          </td>
+                                          <td className="px-4 py-3 text-zinc-300">{formatCurrency(entry.plannedValue)}</td>
+                                          <td className="px-4 py-3 text-zinc-300">{formatCurrency(entry.paidValue)}</td>
+                                          <td className="px-4 py-3 text-zinc-300">{formatDateLabel(entry.date)}</td>
+                                          <td className="px-4 py-3 text-right">
+                                            <div className="inline-flex items-center gap-2">
+                                              <button
+                                                type="button"
+                                                onClick={() => startEditEntry(item.id, entry)}
+                                                className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-white/15 bg-white/[0.03] text-zinc-200 hover:bg-white/[0.08]"
+                                                title="Editar subitem"
+                                              >
+                                                <Pencil size={13} />
+                                              </button>
+
+                                              <button
+                                                type="button"
+                                                onClick={() => handleDeleteEntry(item.id, entry.id)}
+                                                className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                                                title="Excluir subitem"
+                                              >
+                                                <Trash2 size={14} />
+                                              </button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )
+                                    })()
                                   ))}
                                 </tbody>
                               </table>
