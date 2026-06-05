@@ -19,6 +19,7 @@ import Sidebar from '../../../../../../components/Sidebar'
 
 import {
   ArrowLeft,
+  ArrowRightLeft,
   Check,
   ClipboardList,
   Loader2,
@@ -641,6 +642,7 @@ export default function ProjectStageDetailsPage() {
   const [loadingContext, setLoadingContext] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [stageMeta, setStageMeta] = useState<StageMeta | null>(null)
+  const [projectStages, setProjectStages] = useState<StageMeta[]>([])
 
   const [costItems, setCostItems] = useState<CostItem[]>([])
   const [descriptionFilter, setDescriptionFilter] = useState('')
@@ -656,6 +658,9 @@ export default function ProjectStageDetailsPage() {
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null)
   const [deletingEntryKey, setDeletingEntryKey] = useState<string | null>(null)
   const [creatingItem, setCreatingItem] = useState(false)
+  const [migratingItemId, setMigratingItemId] = useState<string | null>(null)
+  const [migrationItemId, setMigrationItemId] = useState<string | null>(null)
+  const [targetMigrationStageId, setTargetMigrationStageId] = useState('')
   const [savingEntryItemId, setSavingEntryItemId] = useState<string | null>(null)
   const [entryDraft, setEntryDraft] = useState<DraftEntry>(emptyDraft)
   const [plannedStartDate, setPlannedStartDate] = useState<Date | null>(null)
@@ -695,6 +700,14 @@ export default function ProjectStageDetailsPage() {
   const filteredLaunches = useMemo(
     () => filteredCostItems.reduce((sum, item) => sum + item.entries.length, 0),
     [filteredCostItems]
+  )
+
+  const migrationStageOptions = useMemo(
+    () =>
+      projectStages.filter(
+        (item) => String(item.id) !== String(stageId)
+      ),
+    [projectStages, stageId]
   )
 
   useEffect(() => {
@@ -873,6 +886,8 @@ export default function ProjectStageDetailsPage() {
         const stageData = await stageResponse.json()
         const stageList = parseStages(stageData)
 
+        setProjectStages(stageList)
+
         const found = stageList.find(
           (item) => String(item.id) === String(stageId)
         )
@@ -1036,6 +1051,11 @@ export default function ProjectStageDetailsPage() {
         setEntryDraft(emptyDraft())
       }
 
+      if (migrationItemId === itemId) {
+        setMigrationItemId(null)
+        setTargetMigrationStageId('')
+      }
+
       toast.success('Item excluido com sucesso')
 
       void loadStageItems()
@@ -1045,6 +1065,80 @@ export default function ProjectStageDetailsPage() {
       toast.error(error instanceof Error ? error.message : 'Erro ao excluir item')
     } finally {
       setDeletingItemId(null)
+    }
+  }
+
+  function handleStartMigration(itemId: string) {
+    if (migrationStageOptions.length === 0) {
+      toast.error('Nao ha outra etapa disponivel para migracao')
+      return
+    }
+
+    setMigrationItemId(itemId)
+    setTargetMigrationStageId((current) => {
+      if (current) {
+        return current
+      }
+
+      return migrationStageOptions[0]?.id || ''
+    })
+  }
+
+  async function handleMigrateItem(itemId: string) {
+    if (!projectId || !stageId) {
+      toast.error('Projeto ou etapa invalidos para migracao')
+      return
+    }
+
+    if (!targetMigrationStageId) {
+      toast.error('Selecione a etapa de destino')
+      return
+    }
+
+    if (String(targetMigrationStageId) === String(stageId)) {
+      toast.error('A etapa de destino deve ser diferente da atual')
+      return
+    }
+
+    try {
+      setMigratingItemId(itemId)
+
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages/${encodeURIComponent(stageId)}/items/migrate`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            target_project_stage_id: targetMigrationStageId,
+            item_ids: [itemId]
+          })
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null)
+        const detail =
+          typeof errorData?.detail === 'string'
+            ? errorData.detail
+            : 'Erro ao migrar item para outra etapa'
+
+        throw new Error(detail)
+      }
+
+      setMigrationItemId(null)
+      setTargetMigrationStageId('')
+
+      toast.success('Item migrado com sucesso')
+
+      void loadStageItems()
+      void loadStageTotals()
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Erro ao migrar item para outra etapa')
+    } finally {
+      setMigratingItemId(null)
     }
   }
 
@@ -1751,6 +1845,20 @@ export default function ProjectStageDetailsPage() {
 
                               <button
                                 type="button"
+                                onClick={() => handleStartMigration(item.id)}
+                                disabled={migratingItemId === item.id}
+                                className="w-9 h-9 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 flex items-center justify-center disabled:opacity-50"
+                                title="Migrar item para outra etapa"
+                              >
+                                {migratingItemId === item.id ? (
+                                  <Loader2 size={15} className="animate-spin" />
+                                ) : (
+                                  <ArrowRightLeft size={14} />
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
                                 onClick={() => void handleDeleteItem(item.id)}
                                 disabled={deletingItemId === item.id}
                                 className="w-9 h-9 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 flex items-center justify-center"
@@ -1764,6 +1872,46 @@ export default function ProjectStageDetailsPage() {
                               </button>
                             </div>
                           </div>
+
+                          {migrationItemId === item.id && (
+                            <div className="px-4 py-3 border-b border-white/10 bg-amber-500/5 space-y-3">
+                              <p className="text-sm text-amber-200">Migrar item e custos vinculados para outra etapa</p>
+
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                                <select
+                                  value={targetMigrationStageId}
+                                  onChange={(event) => setTargetMigrationStageId(event.target.value)}
+                                  className="h-10 rounded-xl border border-white/10 bg-black/30 px-3 text-sm outline-none focus:border-amber-400/50 sm:min-w-[280px]"
+                                >
+                                  {migrationStageOptions.map((option) => (
+                                    <option key={option.id} value={option.id} className="bg-zinc-950 text-white">
+                                      {option.name}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                <button
+                                  type="button"
+                                  onClick={() => void handleMigrateItem(item.id)}
+                                  disabled={migratingItemId === item.id || !targetMigrationStageId}
+                                  className="h-10 px-4 rounded-xl bg-amber-500 text-black font-semibold hover:bg-amber-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {migratingItemId === item.id ? 'Migrando...' : 'Confirmar migracao'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setMigrationItemId(null)
+                                    setTargetMigrationStageId('')
+                                  }}
+                                  className="h-10 px-4 rounded-xl border border-white/15 bg-white/[0.03] hover:bg-white/[0.08] transition-all text-sm"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
                           {activeItemId === item.id && (
                             <div className="p-4 border-b border-white/10 bg-black/25 space-y-3">

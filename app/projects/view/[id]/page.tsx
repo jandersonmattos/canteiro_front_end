@@ -827,7 +827,8 @@ export default function ProjectViewPage() {
     'stages' |
     'dashboard' |
     'files' |
-    'cronograma'
+    'cronograma' |
+    'custos-a-pagar'
   >('stages')
 
   const [loadingProjectInfo, setLoadingProjectInfo] =
@@ -877,6 +878,24 @@ export default function ProjectViewPage() {
 
   const [confirmDeleteFile, setConfirmDeleteFile] =
     useState<FileType | null>(null)
+
+  type CustoAPagar = {
+    id: string
+    descricao: string
+    recurso_nome: string
+    valor_previsto: number
+    valor_pago: number
+    saldo_a_pagar: number
+    data: string
+    etapa_id: string
+    etapa_nome: string
+  }
+
+  const [custosAPagar, setCustosAPagar] =
+    useState<CustoAPagar[]>([])
+
+  const [loadingCustosAPagar, setLoadingCustosAPagar] =
+    useState(false)
 
   const requestIdRef = useRef(0)
   const stageCostSearchCacheRef = useRef(new Map<string, string>())
@@ -1785,6 +1804,33 @@ export default function ProjectViewPage() {
               label="Cronograma"
               onClick={() => setTab('cronograma')}
             />
+
+            <TabButton
+              active={tab === 'custos-a-pagar'}
+              label="Custos a pagar"
+              onClick={() => {
+                setTab('custos-a-pagar')
+                if (custosAPagar.length === 0) {
+                  setLoadingCustosAPagar(true)
+                  fetch(
+                    `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/costs/a-pagar`,
+                    {
+                      headers: {
+                        Authorization: `Bearer ${localStorage.getItem('token')}`
+                      }
+                    }
+                  )
+                    .then(res => res.json())
+                    .then(data => {
+                      if (Array.isArray(data)) {
+                        setCustosAPagar(data)
+                      }
+                    })
+                    .catch(err => console.error('Erro ao carregar custos a pagar:', err))
+                    .finally(() => setLoadingCustosAPagar(false))
+                }
+              }}
+            />
           </div>
 
           {tab === 'stages' && (
@@ -2150,6 +2196,87 @@ export default function ProjectViewPage() {
 
             </div>
 
+          )}
+
+          {tab === 'custos-a-pagar' && (
+            <div className="rounded-[28px] border border-white/10 bg-white/[0.03] overflow-hidden">
+              <div className="p-5 border-b border-white/10">
+                <h3 className="text-2xl font-bold">Custos a pagar</h3>
+                <p className="text-zinc-400 text-sm mt-1">Custos com saldo pendente em todas as etapas da obra</p>
+              </div>
+
+              {loadingCustosAPagar ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 size={32} className="animate-spin text-emerald-400" />
+                </div>
+              ) : custosAPagar.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center">
+                  <p className="text-zinc-400">Nenhum custo a pagar encontrado</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 text-zinc-400">
+                        <th className="text-left px-5 py-3 font-medium">Etapa</th>
+                        <th className="text-left px-5 py-3 font-medium">Descrição</th>
+                        <th className="text-left px-5 py-3 font-medium">Recurso</th>
+                        <th className="text-left px-5 py-3 font-medium">Data</th>
+                        <th className="text-right px-5 py-3 font-medium">Valor previsto</th>
+                        <th className="text-right px-5 py-3 font-medium">Valor pago</th>
+                        <th className="text-right px-5 py-3 font-medium">Saldo a pagar</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {custosAPagar.map((custo) => (
+                        <tr
+                          key={custo.id}
+                          className="border-b border-white/5 hover:bg-white/[0.03] transition-colors"
+                        >
+                          <td className="px-5 py-3 text-zinc-300">{custo.etapa_nome}</td>
+                          <td className="px-5 py-3 text-white">{custo.descricao}</td>
+                          <td className="px-5 py-3 text-zinc-300">{custo.recurso_nome || '-'}</td>
+                          <td className="px-5 py-3 text-zinc-400">
+                            {custo.data
+                              ? new Date(custo.data).toLocaleDateString('pt-BR')
+                              : '-'}
+                          </td>
+                          <td className="px-5 py-3 text-right text-zinc-300">
+                            {custo.valor_previsto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </td>
+                          <td className="px-5 py-3 text-right text-zinc-300">
+                            {custo.valor_pago.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </td>
+                          <td className="px-5 py-3 text-right font-semibold text-red-400">
+                            {custo.saldo_a_pagar.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-white/10 bg-white/[0.02]">
+                        <td colSpan={4} className="px-5 py-3 text-zinc-400 font-medium">Total</td>
+                        <td className="px-5 py-3 text-right font-medium text-zinc-300">
+                          {custosAPagar
+                            .reduce((sum, c) => sum + c.valor_previsto, 0)
+                            .toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </td>
+                        <td className="px-5 py-3 text-right font-medium text-zinc-300">
+                          {custosAPagar
+                            .reduce((sum, c) => sum + c.valor_pago, 0)
+                            .toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </td>
+                        <td className="px-5 py-3 text-right font-bold text-red-400">
+                          {custosAPagar
+                            .reduce((sum, c) => sum + c.saldo_a_pagar, 0)
+                            .toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
           )}
 
           {tab === 'cronograma' && (

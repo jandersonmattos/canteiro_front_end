@@ -318,13 +318,7 @@ export default function ProjectDashboardPanel({
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            <ChartCard
-              title="Custos por Categoria"
-              subtitle="Distribuição financeira da obra"
-              data={byCategory}
-            />
-
+          <div className="grid grid-cols-1 gap-6">
             <ChartCard
               title="Custos por Etapa"
               subtitle="Distribuição financeira por etapa"
