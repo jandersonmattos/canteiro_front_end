@@ -38,6 +38,7 @@ type StageMeta = {
   plannedEndDate: string
   realStartDate: string
   realEndDate: string
+  progress: number
 }
 
 type CostEntry = {
@@ -189,8 +190,31 @@ function normalizeStageMeta(raw: unknown, index: number): StageMeta | null {
     realEndDate: pickString(
       value.data_fim_real,
       value.real_end_date
+    ),
+    progress: pickNumber(
+      value.progresso,
+      value.progress,
+      value.percentual_progresso,
+      value.progress_percent
     )
   }
+}
+
+function normalizeSingleStage(raw: unknown): StageMeta | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const root = raw as LooseObject
+
+  return (
+    normalizeStageMeta(root, 0) ||
+    normalizeStageMeta(root.project_stage, 0) ||
+    normalizeStageMeta(root.projeto_etapa, 0) ||
+    normalizeStageMeta(root.stage, 0) ||
+    normalizeStageMeta(root.etapa, 0) ||
+    normalizeStageMeta(root.data, 0)
+  )
 }
 
 function parseStages(raw: unknown): StageMeta[] {
@@ -218,7 +242,8 @@ function parseStages(raw: unknown): StageMeta[] {
           plannedStartDate: '',
           plannedEndDate: '',
           realStartDate: '',
-          realEndDate: ''
+          realEndDate: '',
+          progress: 0
         }
       }
 
@@ -668,6 +693,7 @@ export default function ProjectStageDetailsPage() {
   const [realStartDate, setRealStartDate] = useState<Date | null>(null)
   const [realEndDate, setRealEndDate] = useState<Date | null>(null)
   const [savingStageDates, setSavingStageDates] = useState(false)
+  const [stageProgress, setStageProgress] = useState('0')
   const [loadingStageTotals, setLoadingStageTotals] = useState(false)
   const [stageTotals, setStageTotals] = useState<StageTotals>({
     totalStage: 0,
@@ -715,11 +741,13 @@ export default function ProjectStageDetailsPage() {
     setPlannedEndDate(parseInputDate(stageMeta?.plannedEndDate || ''))
     setRealStartDate(parseInputDate(stageMeta?.realStartDate || ''))
     setRealEndDate(parseInputDate(stageMeta?.realEndDate || ''))
+    setStageProgress(String(stageMeta?.progress ?? 0))
   }, [
     stageMeta?.plannedStartDate,
     stageMeta?.plannedEndDate,
     stageMeta?.realStartDate,
-    stageMeta?.realEndDate
+    stageMeta?.realEndDate,
+    stageMeta?.progress
   ])
 
   useEffect(() => {
@@ -872,9 +900,10 @@ export default function ProjectStageDetailsPage() {
     try {
       setLoadingContext(true)
 
-      const [projectResponse, stageResponse] = await Promise.all([
+      const [projectResponse, stageResponse, stageDetailResponse] = await Promise.all([
         fetch(`${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}`),
-        fetch(`${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages`)
+        fetch(`${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/projects/${projectId}/stages`),
+        fetch(`${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/project-stages/${encodeURIComponent(stageId)}`)
       ])
 
       if (projectResponse.ok) {
@@ -888,11 +917,35 @@ export default function ProjectStageDetailsPage() {
 
         setProjectStages(stageList)
 
-        const found = stageList.find(
+        const foundFromList = stageList.find(
           (item) => String(item.id) === String(stageId)
         )
 
-        setStageMeta(found || null)
+        let resolvedStage = foundFromList || null
+
+        if (stageDetailResponse.ok) {
+          const stageDetailData = await stageDetailResponse.json()
+          const detail = normalizeSingleStage(stageDetailData)
+
+          if (detail) {
+            resolvedStage = {
+              ...(foundFromList || detail),
+              ...detail,
+              id: foundFromList?.id || detail.id || stageId,
+              name: foundFromList?.name || detail.name || `Etapa ${stageId}`
+            }
+
+            setProjectStages((current) =>
+              current.map((item) =>
+                String(item.id) === String(stageId)
+                  ? { ...item, ...resolvedStage }
+                  : item
+              )
+            )
+          }
+        }
+
+        setStageMeta(resolvedStage)
       }
     } catch (error) {
       console.error(error)
@@ -1509,10 +1562,22 @@ export default function ProjectStageDetailsPage() {
       return
     }
 
+    const parsedProgress = Number(stageProgress)
+
+    if (!Number.isFinite(parsedProgress)) {
+      toast.error('Progresso deve ser um numero valido')
+      return
+    }
+
+    if (parsedProgress < 0 || parsedProgress > 100) {
+      toast.error('Progresso deve estar entre 0 e 100')
+      return
+    }
+
     try {
       setSavingStageDates(true)
 
-      const response = await fetch(
+      const datesResponse = await fetch(
         `${process.env.NEXT_PUBLIC_CANTEIRO_API_URL}/project-stages/${encodeURIComponent(stageId)}`,
         {
           method: 'PUT',
@@ -1523,25 +1588,36 @@ export default function ProjectStageDetailsPage() {
             data_inicio_prevista: formatDateForApi(plannedStartDate),
             data_fim_prevista: formatDateForApi(plannedEndDate),
             data_inicio_real: formatDateForApi(realStartDate),
-            data_fim_real: formatDateForApi(realEndDate)
+            data_fim_real: formatDateForApi(realEndDate),
+            progresso: parsedProgress
           })
         }
       )
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null)
+      if (!datesResponse.ok) {
+        const errorData = await datesResponse.json().catch(() => null)
         const detail =
           typeof errorData?.detail === 'string'
             ? errorData.detail
-            : 'Erro ao atualizar datas da etapa'
+            : 'Erro ao atualizar dados da etapa'
 
         throw new Error(detail)
       }
 
-      toast.success('Datas da etapa atualizadas com sucesso')
+      setStageMeta((current) =>
+        current
+          ? {
+              ...current,
+              progress: parsedProgress
+            }
+          : current
+      )
+
+      setStageProgress(String(parsedProgress))
+      toast.success('Etapa atualizada com sucesso')
     } catch (error) {
       console.error(error)
-      toast.error(error instanceof Error ? error.message : 'Erro ao atualizar datas da etapa')
+      toast.error(error instanceof Error ? error.message : 'Erro ao atualizar dados da etapa')
     } finally {
       setSavingStageDates(false)
     }
@@ -1649,6 +1725,24 @@ export default function ProjectStageDetailsPage() {
 
                       </div>
 
+                      <div className="rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 space-y-2">
+                        <p className="text-[11px] uppercase tracking-wide text-zinc-500">Progresso da etapa (%)</p>
+
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step="0.01"
+                            value={stageProgress}
+                            onChange={(event) => setStageProgress(event.target.value)}
+                            placeholder="0 a 100"
+                            className="h-10 w-full sm:w-40 rounded-lg border border-white/10 bg-black/40 px-3 text-sm outline-none focus:border-emerald-400/50"
+                          />
+
+                        </div>
+                      </div>
+
                       <button
                         type="button"
                         onClick={handleSaveStageDates}
@@ -1658,7 +1752,7 @@ export default function ProjectStageDetailsPage() {
                         {savingStageDates && (
                           <Loader2 size={16} className="animate-spin" />
                         )}
-                        Salvar prazos
+                        Salvar etapa
                       </button>
                     </div>
                   </div>
