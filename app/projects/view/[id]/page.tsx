@@ -17,6 +17,7 @@ import {
 
 import Sidebar from '../../../../components/Sidebar'
 import ProjectDashboardPanel from '../../../../components/ProjectDashboardPanel'
+import { RemindersContent } from '../../../../components/RemindersContent'
 
 import {
   ArrowLeft,
@@ -828,7 +829,8 @@ export default function ProjectViewPage() {
     'dashboard' |
     'files' |
     'cronograma' |
-    'custos-a-pagar'
+    'custos-a-pagar' |
+    'lembretes'
   >('stages')
 
   const [loadingProjectInfo, setLoadingProjectInfo] =
@@ -1831,6 +1833,12 @@ export default function ProjectViewPage() {
                 }
               }}
             />
+
+            <TabButton
+              active={tab === 'lembretes'}
+              label="Lembretes"
+              onClick={() => setTab('lembretes')}
+            />
           </div>
 
           {tab === 'stages' && (
@@ -2412,6 +2420,10 @@ export default function ProjectViewPage() {
                 </div>
               </div>
             </div>
+          )}
+
+          {tab === 'lembretes' && (
+            <RemindersContent projectId={projectId} />
           )}
 
         </div>

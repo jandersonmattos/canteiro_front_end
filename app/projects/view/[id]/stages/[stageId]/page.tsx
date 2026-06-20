@@ -386,11 +386,21 @@ function isUuid(value: string) {
 }
 
 function normalizeStageTotals(raw: unknown): StageTotals {
-  const item = raw && typeof raw === 'object'
+  const root = raw && typeof raw === 'object'
     ? raw as Record<string, unknown>
     : {}
 
-  const totalStage = pickNumber(
+  const nestedTotals =
+    (root.totals && typeof root.totals === 'object' ? root.totals : null) ||
+    (root.resumo && typeof root.resumo === 'object' ? root.resumo : null) ||
+    (root.summary && typeof root.summary === 'object' ? root.summary : null) ||
+    (root.data && typeof root.data === 'object' ? root.data : null)
+
+  const item = nestedTotals
+    ? nestedTotals as Record<string, unknown>
+    : root
+
+  const totalStageRaw = pickNumber(
     item.total_da_etapa,
     item.total_etapa,
     item.total_stage,
@@ -411,6 +421,9 @@ function normalizeStageTotals(raw: unknown): StageTotals {
     item.a_pagar,
     item.valor_a_pagar
   )
+
+  const derivedStageFromParts = totalPaid + Math.max(totalToPayRaw, 0)
+  const totalStage = Math.max(totalStageRaw, derivedStageFromParts, totalPaid)
 
   const totalToPay = totalToPayRaw > 0
     ? totalToPayRaw
