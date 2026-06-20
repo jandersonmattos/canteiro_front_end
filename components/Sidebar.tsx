@@ -9,12 +9,17 @@ import {
   BriefcaseBusiness,
   Percent,
   Users,
-  Calculator
+  Calculator,
+  Bell
 } from 'lucide-react'
 
 export default function Sidebar() {
 
   const pathname = usePathname()
+
+  // Extrair o ID do projeto da URL se estamos dentro de um projeto
+  const projectIdMatch = pathname.match(/\/projects\/(view|edit)?\/([^/]+)/)
+  const projectId = projectIdMatch?.[2]
 
   const menu = [
     {
@@ -41,7 +46,16 @@ export default function Sidebar() {
       label: 'BDIs',
       href: '/bdis',
       icon: Percent
-    }
+    },
+    ...(projectId
+      ? [
+          {
+            label: 'Lembretes',
+            href: `/projects/${projectId}/lembretes`,
+            icon: Bell
+          }
+        ]
+      : [])
   ]
 
   return (
