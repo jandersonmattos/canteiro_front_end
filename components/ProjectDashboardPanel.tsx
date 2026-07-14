@@ -20,6 +20,7 @@ import {
   Landmark,
   Building2,
   BarChart3,
+  BadgePercent,
   ChevronDown,
   Loader2
 } from 'lucide-react'
@@ -144,7 +145,9 @@ export default function ProjectDashboardPanel({
       costPerUnit:
         totalPaid / (data.units || 1),
       salePerUnit:
-        totalSale / (data.units || 1)
+        totalSale / (data.units || 1),
+      salePerUnitWithBrokerCommission:
+        (totalSale / (data.units || 1)) * 1.04
     }
 
   }, [data])
@@ -286,7 +289,7 @@ export default function ProjectDashboardPanel({
 
       {kpis && (
         <>
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-6">
             <KpiCard
               title="Total Pago"
               value={currency(kpis.totalPaid)}
@@ -315,6 +318,12 @@ export default function ProjectDashboardPanel({
               title="Venda por Unidade"
               value={currency(kpis.salePerUnit)}
               icon={<BarChart3 size={22} />}
+            />
+
+            <KpiCard
+              title="Venda por Unidade + Corretor (4%)"
+              value={currency(kpis.salePerUnitWithBrokerCommission)}
+              icon={<BadgePercent size={22} />}
             />
           </div>
 
