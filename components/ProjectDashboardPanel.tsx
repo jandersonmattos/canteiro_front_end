@@ -450,7 +450,7 @@ function KpiCard({
             {title}
           </p>
 
-          <h3 className="text-4xl font-bold tracking-tight">
+          <h3 className="text-3xl font-bold leading-tight tracking-tight">
             {value}
           </h3>
         </div>
